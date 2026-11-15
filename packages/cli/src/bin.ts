@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 
 declare const __SVCLENS_VERSION__: string;
-import { runBuild, runDiff, runExport, runLink, runScan, runServe, runValidate } from './index.js';
+import { runBuild, runDiff, runExport, runImpact, runLink, runScan, runServe, runValidate } from './index.js';
 
 const program = new Command('svclens').description('Map your APIs as an interactive graph').version(__SVCLENS_VERSION__);
 
@@ -88,6 +88,20 @@ program
   .option('-f, --format <format>', 'text or markdown', 'text')
   .action(async (dir: string, opts: { base?: string; format: 'text' | 'markdown' }) => {
     process.exitCode = await runDiff(dir, opts);
+  });
+
+const wholeNumber = (v: string) => Number(v);
+
+program
+  .command('impact')
+  .description('show the blast radius of a service: who depends on it and what it depends on')
+  .argument('<service>', 'service id')
+  .argument('[dir]', 'catalog directory', '.')
+  .option('--depth <n>', 'follow at most n links away from the service (default: no limit)', wholeNumber)
+  .option('-f, --format <format>', 'text, markdown or json', 'text')
+  .option('--max-affected <n>', 'exit with code 1 when more than n services are affected (for CI)', wholeNumber)
+  .action(async (service: string, dir: string, opts: { depth?: number; format: 'text' | 'markdown' | 'json'; maxAffected?: number }) => {
+    process.exitCode = await runImpact(dir, service, opts);
   });
 
 program.parseAsync().catch((err: unknown) => {

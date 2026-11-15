@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { runDiff, runExport } from '../src/index.js';
+import { runDiff, runExport, runImpact } from '../src/index.js';
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, stdio: 'pipe' }).toString();
@@ -74,5 +74,56 @@ describe('runDiff', () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'svclens-nogit-'));
     expect(await runDiff(dir, { base: 'main', format: 'text' })).toBe(1);
     expect(out.join('\n')).toContain('not inside a git repository');
+  });
+});
+
+describe('runImpact', () => {
+  const files = {
+    'services/web.yaml': 'id: web\nname: Web\nkind: web\nowner: front\ndependsOn:\n  - target: orders\n',
+    'services/admin.yaml': 'id: admin\nname: Admin\nkind: web\nowner: back\ndependsOn:\n  - target: orders\n',
+    'services/orders.yaml': 'id: orders\nname: Orders\nkind: core\nowner: sales\ndependsOn:\n  - target: db\n    protocol: sql\n',
+    'services/db.yaml': 'id: db\nname: DB\nkind: database\nowner: sales\n',
+  };
+  const setup = async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'svclens-impact-'));
+    await write(dir, files);
+    return dir;
+  };
+
+  it('prints who is affected and what the service depends on', async () => {
+    const dir = await setup();
+    expect(await runImpact(dir, 'orders', { format: 'text' })).toBe(0);
+    const text = out.join('\n');
+    expect(text).toContain('2 services are affected');
+    expect(text).toContain('web Web (web, http)');
+    expect(text).toContain('db DB (database, sql)');
+    expect(text).toContain('Owners to notify: back, front');
+  });
+
+  it('writes json and markdown', async () => {
+    const dir = await setup();
+    expect(await runImpact(dir, 'db', { format: 'json' })).toBe(0);
+    const json = JSON.parse(out.join('\n'));
+    expect(json.affected.map((n: { id: string }) => n.id)).toEqual(['orders', 'admin', 'web']);
+    out.length = 0;
+    expect(await runImpact(dir, 'db', { format: 'markdown', depth: 1 })).toBe(0);
+    expect(out.join('\n')).toContain('### svclens impact: `db`');
+    expect(out.join('\n')).not.toContain('`web`');
+  });
+
+  it('fails above --max-affected and passes at the limit', async () => {
+    const dir = await setup();
+    expect(await runImpact(dir, 'orders', { format: 'text', maxAffected: 2 })).toBe(0);
+    expect(await runImpact(dir, 'orders', { format: 'text', maxAffected: 1 })).toBe(1);
+    expect(out.join('\n')).toContain('2 services affected, above the limit of 1');
+  });
+
+  it('rejects unknown services with suggestions and invalid options', async () => {
+    const dir = await setup();
+    expect(await runImpact(dir, 'order', { format: 'text' })).toBe(1);
+    expect(out.join('\n')).toContain('service not found: order (did you mean: orders?)');
+    expect(await runImpact(dir, 'orders', { format: 'text', depth: 0 })).toBe(1);
+    expect(await runImpact(dir, 'orders', { format: 'text', maxAffected: -1 })).toBe(1);
+    expect(await runImpact(dir, 'orders', { format: 'xml' as 'text' })).toBe(1);
   });
 });

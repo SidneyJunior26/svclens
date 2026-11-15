@@ -202,9 +202,11 @@ flowchart LR
   yaml --> build[svclens build]
   yaml --> export[svclens export]
   yaml --> diff[svclens diff]
+  yaml --> impact[svclens impact]
   build --> site[Site estático<br>2D e 3D]
   export --> mermaid[Diagrama Mermaid]
   diff --> pr[Comentário no PR]
+  impact --> raio[Raio de impacto]
 ```
 
 Três coisas escrevem no catálogo: o scan, um agente de IA e uma pessoa. Cada ligação guarda quem a escreveu, e isso decide o que acontece no próximo scan.
@@ -439,6 +441,37 @@ jobs:
 
 </details>
 
+## Raio de impacto
+
+`svclens impact <serviço>` responde a uma pergunta que quase sempre aparece tarde: se este serviço cair ou mudar, quem sente? O comando percorre o grafo nos dois sentidos. Lista quem depende do serviço, direta ou indiretamente, nível por nível, e do que ele mesmo depende. No fim, mostra os times donos dos serviços afetados, que são as pessoas a avisar antes de uma mudança. Ligações `inferred` aparecem marcadas, porque nem todo vínculo descoberto pelo scan está confirmado.
+
+Exemplo com o catálogo de demonstração, limitado a dois níveis a partir de Orders DB:
+
+> If `orders-db` fails or changes, 7 services are affected across 2 levels (depth limited to 2).
+>
+> #### Affected (depend on it)
+>
+> Level 1:
+>
+> - `edi-legacy` EDI Bridge (legacy, sql)
+> - `orders-api` Orders API (core, sql)
+> - `reports-legacy` Relatórios Legado (legacy, sql)
+>
+> Level 2:
+>
+> - `backoffice-bff` Backoffice BFF (bff, http) via `orders-api`
+> - `mobile-bff` Mobile BFF (bff, http) via `orders-api`
+> - `partner-gateway` Partner Gateway (core, http) via `orders-api`
+> - `shipping-api` Shipping API (core, http) via `orders-api`
+>
+> Owners to notify: team-backoffice, team-logistics, team-mobile, team-partners
+
+Com `--depth 1` você vê só os vizinhos diretos. O formato `json` serve para scripts e o `markdown` para comentário em pull request. No CI, `--max-affected 10` faz o comando terminar com código 1 quando mais de 10 serviços seriam afetados, o que permite pedir uma segunda revisão para mudanças em serviços muito usados:
+
+```bash
+npx svclens impact orders-api catalogo --max-affected 10
+```
+
 ## Configuração
 
 Tudo é opcional. O arquivo `svclens.config.yaml` fica na raiz do catálogo.
@@ -478,6 +511,7 @@ Os arquivos de serviço têm um JSON Schema. Para ter autocompletar e validaçã
 | `svclens link <origem> <alvo> [-d dir] [-p protocolo] [-c confiança] [-e arquivo:linha] [-n nota]` | Adiciona ou atualiza uma dependência sem mexer nos comentários do arquivo. As skills usam este comando. |
 | `svclens export [dir] [-f mermaid] [-o arquivo] [--direction LR\|TB]` | Exporta o catálogo como diagrama Mermaid. |
 | `svclens diff [dir] [-b ref] [-f text\|markdown]` | Mostra o que mudou desde uma referência git. |
+| `svclens impact <serviço> [dir] [--depth n] [-f text\|markdown\|json] [--max-affected n]` | Mostra o raio de impacto de um serviço: quem depende dele, do que ele depende e quem avisar. |
 
 ## Perguntas frequentes
 
