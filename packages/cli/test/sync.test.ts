@@ -225,3 +225,100 @@ describe('runSync input checks', () => {
     await rm(plain, { recursive: true, force: true });
   });
 });
+
+describe('runSync with --base', () => {
+  const SETTINGS = 'src/OrdersApi/appsettings.json';
+
+  /** Source repository whose main branch calls inventory only; the feature branch adds a call to payments. */
+  async function branchedSource() {
+    const dir = await source();
+    const full = await readFile(path.join(dir, SETTINGS), 'utf8');
+    await writeFile(path.join(dir, SETTINGS), full.replace(/\s*"Payments": "[^"]+",/, ''));
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'base');
+    git(dir, 'checkout', '-q', '-b', 'feature');
+    await writeFile(path.join(dir, SETTINGS), full);
+    git(dir, 'commit', '-q', '-am', 'calls payments');
+    return dir;
+  }
+
+  it('separates the changes of the branch from what the catalog was already missing', async () => {
+    const { catalog } = await setup();
+    expect(await runSync(catalog, { source: await branchedSource(), base: 'main' })).toBe(0);
+    const report = out.join('\n');
+    const [branch, stale] = report.split('### svclens: catalog already out of date');
+    expect(branch).toContain('### svclens: changes from this branch (since main)');
+    expect(branch).toContain('`orders-api` → `payments-api` (http, confirmed)');
+    expect(branch).not.toContain('inventory-api');
+    expect(branch).toContain('- `payments-api`: 1 service depends on it, directly or not');
+    expect(stale).toContain('- `orders-api`');
+    expect(stale).toContain('`orders-api` → `inventory-api`');
+    expect(stale).toContain('The pr and push modes write these too.');
+  });
+
+  it('leaves out the stale section when the catalog matched the base', async () => {
+    const { catalog } = await setup();
+    const src = await branchedSource();
+    git(src, 'checkout', '-q', 'main');
+    expect(await runSync(catalog, { source: src, mode: 'push', push: false })).toBe(0);
+    git(src, 'checkout', '-q', 'feature');
+    out.length = 0;
+    expect(await runSync(catalog, { source: src, base: 'main' })).toBe(0);
+    expect(out.join('\n')).toContain('`orders-api` → `payments-api`');
+    expect(out.join('\n')).not.toContain('already out of date');
+  });
+
+  it('skips without scanning when no file the scanner reads changed', async () => {
+    const { catalog } = await setup();
+    const src = await branchedSource();
+    git(src, 'checkout', '-q', 'main');
+    git(src, 'checkout', '-q', '-b', 'docs');
+    await writeFile(path.join(src, 'README.md'), '# Orders\n');
+    await writeFile(path.join(src, 'src/OrdersApi/Program.cs'), 'class Program {}\n');
+    git(src, 'add', '.');
+    git(src, 'commit', '-q', '-m', 'docs');
+    const file = path.join(await tmp('out'), 'report.md');
+    expect(await runSync(catalog, { source: src, base: 'main', out: file })).toBe(0);
+    expect(await exists(file)).toBe(false);
+    expect(err.join('\n')).toContain('nothing to sync');
+  });
+
+  it('counts uncommitted and untracked files as changes', async () => {
+    const { catalog } = await setup();
+    const src = await branchedSource();
+    git(src, 'checkout', '-q', 'main');
+    await writeFile(path.join(src, 'src/OrdersApi/appsettings.Development.json'), '{ "Services": { "Billing": "https://billing.acme.internal" } }\n');
+    expect(await runSync(catalog, { source: src, base: 'main' })).toBe(0);
+    expect(err.join('\n')).toContain('1 relevant file changed since main');
+  });
+
+  it('compares with the point where the branch left the base, not with its tip', async () => {
+    const { catalog } = await setup();
+    const src = await branchedSource();
+    git(src, 'checkout', '-q', 'main');
+    await writeFile(path.join(src, 'docker-compose.yml'), 'services:\n  api:\n    image: orders\n');
+    git(src, 'add', '.');
+    git(src, 'commit', '-q', '-m', 'compose on main');
+    git(src, 'checkout', '-q', 'feature');
+    expect(await runSync(catalog, { source: src, base: 'main' })).toBe(0);
+    const branch = out.join('\n').split('already out of date')[0]!;
+    expect(branch).toContain('`orders-api` → `payments-api`');
+  });
+
+  it('still writes the whole scan in push mode', async () => {
+    const { catalog, remote } = await setup();
+    expect(await runSync(catalog, { source: await branchedSource(), base: 'main', mode: 'push' })).toBe(0);
+    const written = git(remote, 'show', 'main:services/orders-api.yaml');
+    expect(written).toContain('target: payments-api');
+    expect(written).toContain('target: inventory-api');
+  });
+
+  it('fails clearly when the base is missing or the source is not a git repository', async () => {
+    const { catalog } = await setup();
+    expect(await runSync(catalog, { source: await branchedSource(), base: 'origin/main' })).toBe(1);
+    expect(err.join('\n')).toContain('git ref not found: origin/main');
+    expect(await runSync(catalog, { source: await source(), base: 'main' })).toBe(1);
+    expect(err.join('\n')).toContain('--base needs the source to be a git repository');
+  });
+});

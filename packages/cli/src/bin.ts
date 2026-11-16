@@ -102,7 +102,8 @@ program
   .option('--branch <name>', 'pr mode: branch to create (default: svclens/sync-<repository>)')
   .option('--message <text>', 'commit message for pr and push modes')
   .option('--no-push', 'pr and push modes: commit but do not push')
-  .action(async (dir: string, opts: { source?: string; mode?: string; createStubs?: boolean; internalDomain?: string[]; out?: string; branch?: string; message?: string; push: boolean }) => {
+  .option('-b, --base <ref>', 'compare with this git ref (e.g. origin/main): skip when no file the scanner reads changed, and separate the changes of this branch in the report')
+  .action(async (dir: string, opts: { source?: string; mode?: string; createStubs?: boolean; internalDomain?: string[]; out?: string; branch?: string; message?: string; push: boolean; base?: string }) => {
     process.exitCode = await runSync(dir, opts);
   });
 

@@ -1,9 +1,10 @@
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { buildGraph, computeImpact, diffGraphs, formatDiff, loadCatalog, type SyncMode } from '@svclens/core';
+import { buildGraph, computeImpact, diffGraphs, formatDiff, loadCatalog, type Catalog, type GraphDiff, type GraphJson, type SyncMode } from '@svclens/core';
+import { isScanRelevant } from '@svclens/scanners';
 import fg from 'fast-glob';
-import { git, GitError, repoRoot } from '../git.js';
+import { extractAt, git, GitError, posix, refExists, repoRoot } from '../git.js';
 import { formatDiagnostics } from '../report.js';
 import { repoLabel } from '../sources.js';
 import { loadAndValidate } from './check.js';
@@ -26,6 +27,12 @@ export interface SyncOptions {
   message?: string;
   /** Set to false to commit without pushing. Default: true. */
   push?: boolean;
+  /**
+   * Git ref the source branch is compared with, e.g. `origin/main`. When set, the sync is skipped if no file the
+   * scanner reads changed since then, and the report separates what this branch changed from what was already
+   * missing in the catalog.
+   */
+  base?: string;
 }
 
 /** Folders that are never part of the catalog itself. */
@@ -117,30 +124,40 @@ export async function runSync(dir: string, opts: SyncOptions): Promise<number> {
     return 1;
   }
 
-  // Everything is scanned into a copy first, so the catalog is only touched after the result was checked.
-  const work = await mkdtemp(path.join(os.tmpdir(), 'svclens-sync-'));
-  try {
-    await cp(root, work, { recursive: true, filter: (src) => !path.relative(root, src).split(path.sep).some((seg) => IGNORED.includes(seg)) });
-    const repo = await originLabel(source);
-    const code = await withLogsOnStderr(() =>
-      runScan(work, { source: [source], createStubs: opts.createStubs, internalDomain: opts.internalDomain, fetch: false, repo }),
-    );
-    if (code !== 0) return code;
-    const scanned = await loadAndValidate(work);
-    if (scanned.errors > 0) {
-      console.error(formatDiagnostics(scanned.diagnostics));
-      console.error('sync aborted: the scan result has errors');
+  let compare: { ref: string; commit: string } | undefined;
+  if (opts.base) {
+    const found = await resolveBase(source, opts.base);
+    if (typeof found === 'string') {
+      console.error(found);
       return 1;
     }
+    const relevant = (await changedSince(source, found.commit)).filter(isScanRelevant);
+    if (relevant.length === 0) {
+      console.error(`no configuration or manifest file changed since ${opts.base}; nothing to sync`);
+      return 0;
+    }
+    console.error(`${relevant.length} relevant file${relevant.length === 1 ? '' : 's'} changed since ${opts.base}`);
+    compare = { ref: opts.base, commit: found.commit };
+  }
+
+  const temps: string[] = [];
+  try {
+    const repo = await originLabel(source);
+    const head = await scanCopy(root, source, opts, repo, temps);
+    if (typeof head === 'number') return head;
 
     const before = buildGraph(catalog, new Date(0));
-    const after = buildGraph(scanned.catalog, new Date(0));
-    const diff = diffGraphs(before, after);
-    const report = [formatDiff(diff, 'markdown'), impactSection(diff.addedEdges.map((e) => e.target), after)].filter(Boolean).join('\n\n');
+    const after = buildGraph(head.catalog, new Date(0));
+    let report = fullReport(diffGraphs(before, after), after);
+    if (compare) {
+      const atBase = await baseGraph(root, source, compare.commit, opts, repo, temps);
+      if (atBase) report = splitReport(compare.ref, diffGraphs(atBase, after), diffGraphs(before, atBase), after);
+      else console.error(`could not scan ${compare.ref}; the report does not separate the changes of this branch`);
+    }
     if (opts.out) await writeFile(path.resolve(opts.out), `${report}\n`);
     else console.log(report);
 
-    const changed = await changedFiles(work, root);
+    const changed = await changedFiles(head.work, root);
     if (mode === 'comment') {
       console.error(`mode comment: nothing written to the catalog (${changed.length} file${changed.length === 1 ? '' : 's'} would change)`);
       return 0;
@@ -149,10 +166,84 @@ export async function runSync(dir: string, opts: SyncOptions): Promise<number> {
       console.error('catalog already up to date, nothing to commit');
       return 0;
     }
-    return await deliver(root, work, source, changed, mode as 'pr' | 'push', opts);
+    return await deliver(root, head.work, source, changed, mode as 'pr' | 'push', opts);
   } finally {
-    await rm(work, { recursive: true, force: true });
+    for (const t of temps) await rm(t, { recursive: true, force: true });
   }
+}
+
+/** Copies the catalog, scans `source` into the copy and validates the result. Returns an exit code on failure. */
+async function scanCopy(root: string, source: string, opts: SyncOptions, repo: string | undefined, temps: string[]): Promise<{ work: string; catalog: Catalog } | number> {
+  const work = await mkdtemp(path.join(os.tmpdir(), 'svclens-sync-'));
+  temps.push(work);
+  await cp(root, work, { recursive: true, filter: (src) => !path.relative(root, src).split(path.sep).some((seg) => IGNORED.includes(seg)) });
+  const code = await withLogsOnStderr(() => runScan(work, { source: [source], createStubs: opts.createStubs, internalDomain: opts.internalDomain, fetch: false, repo }));
+  if (code !== 0) return code;
+  const scanned = await loadAndValidate(work);
+  if (scanned.errors > 0) {
+    console.error(formatDiagnostics(scanned.diagnostics));
+    console.error('sync aborted: the scan result has errors');
+    return 1;
+  }
+  return { work, catalog: scanned.catalog };
+}
+
+/** The commit where the source branch left `ref`, or an error message. */
+async function resolveBase(source: string, ref: string): Promise<{ commit: string } | string> {
+  if (!(await repoRoot(source))) return '--base needs the source to be a git repository';
+  if (!(await refExists(source, ref))) return `git ref not found: ${ref} (in CI, fetch the full history, e.g. fetch-depth: 0)`;
+  try {
+    return { commit: await git(source, ['merge-base', ref, 'HEAD']) };
+  } catch {
+    return `no common history between ${ref} and HEAD (in CI, fetch the full history, e.g. fetch-depth: 0)`;
+  }
+}
+
+/** Files changed in the source since `commit`: committed, staged, modified and untracked. Relative to the source. */
+async function changedSince(source: string, commit: string): Promise<string[]> {
+  const lines = (s: string) => s.split('\n').filter(Boolean);
+  const committed = lines(await git(source, ['diff', '--name-only', '--relative', commit, 'HEAD']));
+  const working = lines(await git(source, ['diff', '--name-only', '--relative', 'HEAD']));
+  const untracked = lines(await git(source, ['ls-files', '--others', '--exclude-standard']));
+  return [...new Set([...committed, ...working, ...untracked])].sort();
+}
+
+/** Graph of the catalog after scanning the source as it was at `commit`, or undefined if that failed. */
+async function baseGraph(root: string, source: string, commit: string, opts: SyncOptions, repo: string | undefined, temps: string[]): Promise<GraphJson | undefined> {
+  const top = await repoRoot(source);
+  if (!top) return undefined;
+  const holder = await mkdtemp(path.join(os.tmpdir(), 'svclens-base-'));
+  temps.push(holder);
+  // realpath: on macOS /tmp and /private/tmp are the same folder seen through a symlink.
+  const rel = posix(path.relative(await realpath(top), await realpath(source)));
+  // The copy keeps the folder name of the source, which the scan uses to name the service.
+  const dest = rel ? holder : path.join(holder, path.basename(source));
+  const dir = rel ? path.join(holder, rel) : dest;
+  try {
+    if (!(await extractAt(top, commit, rel, dest))) await mkdir(dir, { recursive: true });
+  } catch {
+    return undefined;
+  }
+  const scanned = await scanCopy(root, dir, opts, repo, temps);
+  return typeof scanned === 'number' ? undefined : buildGraph(scanned.catalog, new Date(0));
+}
+
+const titled = (title: string, d: GraphDiff): string => {
+  const body = formatDiff(d, 'markdown');
+  return body.startsWith('### svclens') ? body.replace('### svclens', `### ${title}`) : `### ${title}\n\n${body}`;
+};
+
+function fullReport(d: GraphDiff, after: GraphJson): string {
+  return [formatDiff(d, 'markdown'), impactSection(d.addedEdges.map((e) => e.target), after)].filter(Boolean).join('\n\n');
+}
+
+function splitReport(ref: string, branch: GraphDiff, stale: GraphDiff, after: GraphJson): string {
+  const parts = [titled(`svclens: changes from this branch (since ${ref})`, branch), impactSection(branch.addedEdges.map((e) => e.target), after)];
+  const staleText = formatDiff(stale, 'markdown');
+  if (!staleText.startsWith('No changes')) {
+    parts.push(titled('svclens: catalog already out of date', stale), 'Found by the scan but not caused by this branch. The pr and push modes write these too.');
+  }
+  return parts.filter(Boolean).join('\n\n');
 }
 
 function impactSection(targets: string[], graph: ReturnType<typeof buildGraph>): string {

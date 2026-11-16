@@ -486,9 +486,11 @@ Quando alguém adiciona uma chamada a outro serviço num repositório de código
 
 O scan roda numa cópia do catálogo. O catálogo só é alterado se o resultado passar na validação, e só se estiver sem alterações pendentes. Ligações escritas à mão e serviços com `locked: true` continuam como estão. Se o scan não achar mais uma ligação que ele mesmo criou, ela sai do catálogo, mas só nos serviços do repositório escaneado. Serviços novos recebem o campo `repo` a partir do remoto `origin` do repositório, sem credenciais.
 
-O relatório vai para a saída padrão (ou para `--out arquivo.md`) e o progresso do scan vai para a saída de erro. Exemplo de relatório para um novo downstream:
+Com `--base <ref>` (por exemplo `--base origin/main`), o sync olha primeiro o que mudou no repositório desde que a branch saiu da base. Se nenhum arquivo que o scanner lê foi alterado (configurações, `package.json`, `.csproj`, `.svc` e `.asmx`), ele termina na hora, sem escanear e sem gerar relatório. Um PR que só muda código C# ou CSS não dispara nada. Quando há mudança relevante, o scan continua sendo do repositório inteiro, porque o resultado precisa do contexto completo (transformações de config, projetos de um monorepo e arquivos apagados), mas o relatório fica dividido em duas partes. A primeira traz só o que a branch mudou, comparando um scan do ponto onde ela saiu da base com o scan atual. A segunda traz o que o catálogo já não tinha antes da branch, para que diferenças antigas não se misturem com a revisão do PR. Nos modos `pr` e `push` as duas partes são gravadas.
 
-> ### svclens
+O relatório vai para a saída padrão (ou para `--out arquivo.md`) e o progresso do scan vai para a saída de erro. Exemplo de relatório com `--base` para um PR que adiciona um downstream:
+
+> ### svclens: changes from this branch (since origin/main)
 >
 > **+0** services, **-0** services, **~1** changed · **+1** links, **-0** links, **~0** changed
 >
@@ -512,6 +514,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # o --base precisa do histórico
       - uses: actions/checkout@v4
         with:
           repository: minha-empresa/mapa-de-apis
@@ -519,8 +523,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npx svclens sync mapa/catalogo --source . --mode comment --out relatorio.md
-      - run: gh pr comment ${{ github.event.pull_request.number }} --body-file relatorio.md
+      - run: npx svclens sync mapa/catalogo --source . --mode comment --base origin/${{ github.base_ref }} --out relatorio.md
+      # sem relatório quando o PR não muda nenhum arquivo que o scanner lê
+      - run: if [ -f relatorio.md ]; then gh pr comment ${{ github.event.pull_request.number }} --body-file relatorio.md; fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -597,7 +602,7 @@ Os arquivos de serviço têm um JSON Schema. Para ter autocompletar e validaçã
 | `svclens export [dir] [-f mermaid] [-o arquivo] [--direction LR\|TB]` | Exporta o catálogo como diagrama Mermaid. |
 | `svclens diff [dir] [-b ref] [-f text\|markdown]` | Mostra o que mudou desde uma referência git. |
 | `svclens impact <serviço> [dir] [--depth n] [-f text\|markdown\|json] [--max-affected n]` | Mostra o raio de impacto de um serviço: quem depende dele, do que ele depende e quem avisar. |
-| `svclens sync [dir] [-s repositório] [-m comment\|pr\|push] [-o relatório.md] [--branch nome] [--message texto] [--no-push] [--create-stubs] [-i domínio]` | Escaneia um repositório e leva o que achou para o catálogo: relatório, branch para pull request ou commit direto. |
+| `svclens sync [dir] [-s repositório] [-m comment\|pr\|push] [-o relatório.md] [--branch nome] [--message texto] [--no-push] [-b ref] [--create-stubs] [-i domínio]` | Escaneia um repositório e leva o que achou para o catálogo: relatório, branch para pull request ou commit direto. Com `-b`, pula quando nada relevante mudou e separa no relatório o que veio da branch. |
 
 ## Perguntas frequentes
 
