@@ -2,6 +2,7 @@
 
 ## 0.3.0
 
+- Novo comando `svclens impact <serviço>`: mostra o raio de impacto de um serviço, com quem depende dele (direta e indiretamente, por nível), do que ele depende e os times a avisar. Aceita `--depth`, `--format text|markdown|json` e `--max-affected` para falhar no CI quando o impacto passa de um limite.
 - Novo campo `role` (`client` ou `server`) nos serviços. O scan marca apps de navegador, desktop e Blazor WebAssembly como `client` e não registra neles relações diretas com banco ou log, que passam por uma camada de servidor. O item vai para o relatório como inconclusivo.
 - `svclens validate` avisa quando um serviço `client` depende direto de banco ou de log (`client-direct-access`).
 
