@@ -25,6 +25,8 @@ Os serviços ficam em arquivos YAML no Git. O <code>svclens</code> lê os reposi
 · <a href="#primeiros-passos">Primeiros passos</a>
 · <a href="#como-funciona">Como funciona</a>
 · <a href="#descoberta-automática">Descoberta</a>
+· <a href="#raio-de-impacto">Impacto</a>
+· <a href="#atualização-automática-pelo-ci">CI</a>
 · <a href="#editor-local-e-propostas-por-pull-request">Editor</a>
 · <a href="#perguntas-frequentes">Perguntas</a>
 
@@ -82,6 +84,16 @@ O svclens guarda essa informação junto do código, num formato que dá para re
     <td width="50%" valign="top">
       <b>Saídas prontas para documentar</b><br>
       Diagrama Mermaid para colar no README, imagem PNG da tela atual e um diff entre versões do catálogo para comentar em pull requests.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <b>Raio de impacto no terminal</b><br>
+      `svclens impact` lista quem é afetado quando um serviço cai ou muda, nível por nível, e quais times avisar. No CI, pode barrar mudanças que afetam serviços demais.
+    </td>
+    <td width="50%" valign="top">
+      <b>Mapa atualizado pelo CI</b><br>
+      `svclens sync` roda no pipeline dos repositórios de código: comenta no pull request o efeito no mapa e, no merge, abre um pull request no catálogo ou grava direto, como o time preferir.
     </td>
   </tr>
 </table>
@@ -188,6 +200,10 @@ O comando abaixo gera um site estático que pode ir para o GitHub Pages, um buck
 ```bash
 svclens build meu-catalogo     # site em meu-catalogo/dist
 ```
+
+### 6. Mantenha o mapa em dia (opcional)
+
+Para o mapa acompanhar o código sem ninguém rodar o scan à mão, coloque o `svclens sync` no pipeline dos repositórios de código. Veja [Atualização automática pelo CI](#atualização-automática-pelo-ci).
 
 > [!TIP]
 > Quer ver antes de montar o seu? Clone o repositório e rode `pnpm svclens serve examples/acme-demo --open`. É o mesmo catálogo fictício da demonstração.
@@ -476,7 +492,7 @@ npx svclens impact orders-api catalogo --max-affected 10
 
 ## Atualização automática pelo CI
 
-Quando alguém adiciona uma chamada a outro serviço num repositório de código, o mapa precisa saber. `svclens sync` faz o scan de um repositório só, compara com o catálogo e entrega o resultado de um dos três jeitos abaixo. Cada time escolhe o que prefere, com `--mode` ou com `sync.mode` no `svclens.config.yaml`.
+Disponível a partir da versão 0.4.0. Quando alguém adiciona uma chamada a outro serviço num repositório de código, o mapa precisa saber. `svclens sync` faz o scan de um repositório só, compara com o catálogo e entrega o resultado de um dos três jeitos abaixo. Cada time escolhe o que prefere, com `--mode` ou com `sync.mode` no `svclens.config.yaml`.
 
 | Modo | O que faz | Quando usar |
 | --- | --- | --- |
@@ -568,6 +584,8 @@ No modo `pr`, a branch `svclens/...` pertence ao svclens: se um merge novo chega
 
 Nada disso depende do GitHub: `svclens sync` só precisa de git e de um diretório com o catálogo, então os mesmos comandos servem no GitLab CI, no Azure DevOps ou no Jenkins. O que muda é como o pipeline clona o catálogo e abre o pull request. O token com escrita no catálogo só deve existir em pipelines de merge, e nunca em pull requests vindos de forks. O modo `comment` não precisa dele.
 
+O catálogo fica num repositório escolhido por vocês, que pode ser privado, e o pipeline roda nos runners de vocês. Os exemplos assumem o catálogo num repositório separado do código. Para não pegar uma versão nova sem revisar, fixe a versão no pipeline, por exemplo `npx svclens@0.4.0 sync`.
+
 ## Configuração
 
 Tudo é opcional. O arquivo `svclens.config.yaml` fica na raiz do catálogo.
@@ -603,10 +621,10 @@ Os arquivos de serviço têm um JSON Schema. Para ter autocompletar e validaçã
 | Comando | O que faz |
 | --- | --- |
 | `svclens validate [dir] [--strict]` | Confere o schema, ids duplicados, tipos desconhecidos, alvos sem cadastro e serviços sem owner. Com `--strict`, avisos também fazem o comando falhar. |
-| `svclens build [dir] [-o saida]` | Valida o catálogo e gera o site com o `graph.json` em `saida` (por padrão, `<dir>/dist`). |
-| `svclens serve [dir] [-p porta] [--open]` | Abre o editor local (porta 4321 por padrão, só para a própria máquina). |
+| `svclens build [dir] [-o saida] [--web-dist pasta]` | Valida o catálogo e gera o site com o `graph.json` em `saida` (por padrão, `<dir>/dist`). `--web-dist` usa outro build do visualizador. |
+| `svclens serve [dir] [-p porta] [--open] [--web-dist pasta]` | Abre o editor local (porta 4321 por padrão, só para a própria máquina). |
 | `svclens scan [dir] [-s fonte] [-i domínio] [--dry-run] [--create-stubs] [--no-fetch] [--json arquivo] [-v]` | Lê os repositórios (pastas ou URLs git) e atualiza serviços e dependências. |
-| `svclens link <origem> <alvo> [-d dir] [-p protocolo] [-c confiança] [-e arquivo:linha] [-n nota]` | Adiciona ou atualiza uma dependência sem mexer nos comentários do arquivo. As skills usam este comando. |
+| `svclens link <origem> <alvo> [-d dir] [-p protocolo] [-c confiança] [-o scan\|agent\|manual] [-e arquivo:linha] [-n nota]` | Adiciona ou atualiza uma dependência sem mexer nos comentários do arquivo. As skills usam este comando. |
 | `svclens export [dir] [-f mermaid] [-o arquivo] [--direction LR\|TB]` | Exporta o catálogo como diagrama Mermaid. |
 | `svclens diff [dir] [-b ref] [-f text\|markdown]` | Mostra o que mudou desde uma referência git. |
 | `svclens impact <serviço> [dir] [--depth n] [-f text\|markdown\|json] [--max-affected n]` | Mostra o raio de impacto de um serviço: quem depende dele, do que ele depende e quem avisar. |
@@ -624,14 +642,14 @@ Não. O svclens só lê arquivos. Nada roda junto das aplicações e nenhum agen
 <details>
 <summary>Algum dado sai da minha máquina?</summary>
 
-Não. O scan roda localmente, o site gerado é estático e não faz chamadas para fora, e a exportação de PNG e Mermaid acontece no navegador. Os botões de proposta só abrem links do GitHub no seu navegador.
+Não. O scan roda localmente, o site gerado é estático e não faz chamadas para fora, e a exportação de PNG e Mermaid acontece no navegador. Os botões de proposta só abrem links do GitHub no seu navegador. O `svclens sync`, nos modos `pr` e `push`, só envia commits para o repositório do catálogo que vocês configuraram, com as credenciais do pipeline de vocês.
 
 </details>
 
 <details>
 <summary>Funciona com GitLab ou Bitbucket?</summary>
 
-O scan aceita qualquer servidor git como fonte. Os botões de propor mudança por pull request, por enquanto, só existem para o GitHub.
+O scan aceita qualquer servidor git como fonte, e o `svclens sync` roda em qualquer CI que tenha git: GitLab CI, Azure DevOps e Jenkins, por exemplo. Nesses casos o pull request do modo `pr` é aberto com o comando da própria plataforma. Os botões de propor mudança do site, por enquanto, só existem para o GitHub.
 
 </details>
 
