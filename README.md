@@ -203,6 +203,8 @@ flowchart LR
   yaml --> export[svclens export]
   yaml --> diff[svclens diff]
   yaml --> impact[svclens impact]
+  repos2[Repositórios de código] -->|PR ou merge| sync[svclens sync]
+  sync --> yaml
   build --> site[Site estático<br>2D e 3D]
   export --> mermaid[Diagrama Mermaid]
   diff --> pr[Comentário no PR]
@@ -472,6 +474,87 @@ Com `--depth 1` você vê só os vizinhos diretos. O formato `json` serve para s
 npx svclens impact orders-api catalogo --max-affected 10
 ```
 
+## Atualização automática pelo CI
+
+Quando alguém adiciona uma chamada a outro serviço num repositório de código, o mapa precisa saber. `svclens sync` faz o scan de um repositório só, compara com o catálogo e entrega o resultado de um dos três jeitos abaixo. Cada time escolhe o que prefere, com `--mode` ou com `sync.mode` no `svclens.config.yaml`.
+
+| Modo | O que faz | Quando usar |
+| --- | --- | --- |
+| `comment` | Não grava nada. Imprime um relatório em Markdown com os serviços e links novos e o impacto sobre quem ganhou um dependente. | No pull request do repositório de código, para o time ver o efeito no mapa antes do merge. É o padrão. |
+| `pr` | Grava as mudanças numa branch `svclens/sync-<repositório>` do catálogo e a envia ao remoto, para abrir um pull request. | No merge, quando o catálogo passa por revisão. |
+| `push` | Faz o commit direto na branch atual do catálogo e envia. É a atualização totalmente automática. | No merge, quando o time confia no scan e quer o mapa sempre em dia. |
+
+O scan roda numa cópia do catálogo. O catálogo só é alterado se o resultado passar na validação, e só se estiver sem alterações pendentes. Ligações escritas à mão e serviços com `locked: true` continuam como estão. Se o scan não achar mais uma ligação que ele mesmo criou, ela sai do catálogo, mas só nos serviços do repositório escaneado. Serviços novos recebem o campo `repo` a partir do remoto `origin` do repositório, sem credenciais.
+
+O relatório vai para a saída padrão (ou para `--out arquivo.md`) e o progresso do scan vai para a saída de erro. Exemplo de relatório para um novo downstream:
+
+> ### svclens
+>
+> **+0** services, **-0** services, **~1** changed · **+1** links, **-0** links, **~0** changed
+>
+> #### Links added
+> - `orders-api` → `payments-api` (http, confirmed)
+>
+> #### Impact on services that gained a dependent
+> - `payments-api`: 3 services depend on it, directly or not
+
+No GitHub Actions, o comentário no pull request do repositório de código fica assim:
+
+```yaml
+# .github/workflows/mapa.yml, no repositório de código
+name: Mapa de APIs
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  mapa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: minha-empresa/mapa-de-apis
+          path: mapa
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npx svclens sync mapa/catalogo --source . --mode comment --out relatorio.md
+      - run: gh pr comment ${{ github.event.pull_request.number }} --body-file relatorio.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Para atualizar o catálogo no merge, o fluxo muda só no modo e no token, que precisa de permissão de escrita no repositório do catálogo:
+
+```yaml
+on:
+  push:
+    branches: [main]
+jobs:
+  mapa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: minha-empresa/mapa-de-apis
+          token: ${{ secrets.MAPA_TOKEN }}
+          path: mapa
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # modo push: o commit vai direto para a branch do catálogo
+      - run: npx svclens sync mapa/catalogo --source . --mode push
+      # modo pr: troque a linha acima por estas duas
+      # - run: npx svclens sync mapa/catalogo --source . --mode pr --out ../relatorio.md
+      # - run: cd mapa && gh pr create --head "svclens/sync-$(basename "$GITHUB_REPOSITORY")" --title "Atualiza o mapa" --body-file ../relatorio.md || true
+```
+
+No modo `pr`, a branch `svclens/...` pertence ao svclens: se um merge novo chegar com o pull request anterior ainda aberto, a branch é substituída e o pull request se atualiza. Por isso o `|| true` no `gh pr create`, que reclama de pull request já existente. No modo `push`, se o catálogo andou entre o clone e o push, o svclens refaz o rebase uma vez e tenta de novo. Com `--no-push`, ele só faz o commit.
+
+Nada disso depende do GitHub: `svclens sync` só precisa de git e de um diretório com o catálogo, então os mesmos comandos servem no GitLab CI, no Azure DevOps ou no Jenkins. O que muda é como o pipeline clona o catálogo e abre o pull request. O token com escrita no catálogo só deve existir em pipelines de merge, e nunca em pull requests vindos de forks. O modo `comment` não precisa dele.
+
 ## Configuração
 
 Tudo é opcional. O arquivo `svclens.config.yaml` fica na raiz do catálogo.
@@ -484,6 +567,8 @@ sources:                      # onde o scan procura repositórios
 scan:
   internalDomains:            # domínios da empresa, que nunca viram "external"
     - acme.internal
+sync:
+  mode: comment               # como o svclens sync entrega o resultado: comment, pr ou push
 kinds:                        # tipos novos, ou cores diferentes dos nativos
   delphi: { label: Delphi app, color: '#fb7185' }
 groups:                       # nomes e cores dos grupos (domínios)
@@ -512,6 +597,7 @@ Os arquivos de serviço têm um JSON Schema. Para ter autocompletar e validaçã
 | `svclens export [dir] [-f mermaid] [-o arquivo] [--direction LR\|TB]` | Exporta o catálogo como diagrama Mermaid. |
 | `svclens diff [dir] [-b ref] [-f text\|markdown]` | Mostra o que mudou desde uma referência git. |
 | `svclens impact <serviço> [dir] [--depth n] [-f text\|markdown\|json] [--max-affected n]` | Mostra o raio de impacto de um serviço: quem depende dele, do que ele depende e quem avisar. |
+| `svclens sync [dir] [-s repositório] [-m comment\|pr\|push] [-o relatório.md] [--branch nome] [--message texto] [--no-push] [--create-stubs] [-i domínio]` | Escaneia um repositório e leva o que achou para o catálogo: relatório, branch para pull request ou commit direto. |
 
 ## Perguntas frequentes
 

@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 
 declare const __SVCLENS_VERSION__: string;
-import { runBuild, runDiff, runExport, runImpact, runLink, runScan, runServe, runValidate } from './index.js';
+import { runBuild, runDiff, runExport, runImpact, runLink, runScan, runServe, runSync, runValidate } from './index.js';
 
 const program = new Command('svclens').description('Map your APIs as an interactive graph').version(__SVCLENS_VERSION__);
 
@@ -88,6 +88,22 @@ program
   .option('-f, --format <format>', 'text or markdown', 'text')
   .action(async (dir: string, opts: { base?: string; format: 'text' | 'markdown' }) => {
     process.exitCode = await runDiff(dir, opts);
+  });
+
+program
+  .command('sync')
+  .description('scan one repository and bring what it finds into the catalog: as a report, a pull request branch or a direct commit')
+  .argument('[dir]', 'catalog directory', '.')
+  .option('-s, --source <dir>', 'repository to scan (default: current directory)')
+  .option('-m, --mode <mode>', 'comment, pr or push (default: sync.mode in svclens.config.yaml, then comment)')
+  .option('--create-stubs', 'create external services for unresolved hosts outside the internal domains')
+  .option('-i, --internal-domain <domain>', 'internal domain (repeatable; adds to scan.internalDomains)', collect)
+  .option('-o, --out <file>', 'write the markdown report to a file instead of stdout')
+  .option('--branch <name>', 'pr mode: branch to create (default: svclens/sync-<repository>)')
+  .option('--message <text>', 'commit message for pr and push modes')
+  .option('--no-push', 'pr and push modes: commit but do not push')
+  .action(async (dir: string, opts: { source?: string; mode?: string; createStubs?: boolean; internalDomain?: string[]; out?: string; branch?: string; message?: string; push: boolean }) => {
+    process.exitCode = await runSync(dir, opts);
   });
 
 const wholeNumber = (v: string) => Number(v);

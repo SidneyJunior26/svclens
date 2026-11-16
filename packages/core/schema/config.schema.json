@@ -73,6 +73,22 @@
           "additionalProperties": false,
           "default": {}
         },
+        "sync": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "comment",
+                "pr",
+                "push"
+              ],
+              "default": "comment"
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
         "edit": {
           "anyOf": [
             {

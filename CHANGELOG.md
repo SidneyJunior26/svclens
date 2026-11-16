@@ -1,5 +1,9 @@
 # Changelog
 
+## Não lançado
+
+- Novo comando `svclens sync`: escaneia um repositório e leva o resultado para o catálogo, para rodar no CI de um repositório de código. Três modos, escolhidos por `--mode` ou por `sync.mode` no `svclens.config.yaml`: `comment` (relatório em Markdown com o impacto, sem gravar nada), `pr` (branch `svclens/sync-<repositório>` enviada ao remoto) e `push` (commit direto na branch do catálogo, a atualização automática). O scan roda numa cópia, o catálogo só muda se o resultado for válido e se estiver sem alterações pendentes, e um push rejeitado é refeito uma vez com rebase.
+
 ## 0.3.0
 
 - Novo comando `svclens impact <serviço>`: mostra o raio de impacto de um serviço, com quem depende dele (direta e indiretamente, por nível), do que ele depende e os times a avisar. Aceita `--depth`, `--format text|markdown|json` e `--max-affected` para falhar no CI quando o impacto passa de um limite.
