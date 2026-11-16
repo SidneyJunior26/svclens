@@ -77,6 +77,22 @@ describe('runDiff', () => {
   });
 });
 
+describe('runDiff with the catalog at the repository root', () => {
+  it('reads the base version instead of treating every service as new', async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), 'svclens-diff-root-'));
+    git(repo, 'init', '-q', '-b', 'main');
+    await write(repo, { 'services/a.yaml': 'id: a\nname: A\nkind: core\nowner: t\n' });
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'base');
+    await write(repo, { 'services/b.yaml': 'id: b\nname: B\nkind: core\nowner: t\n' });
+
+    expect(await runDiff(repo, { base: 'main', format: 'text' })).toBe(0);
+    const text = out.join('\n');
+    expect(text).toContain('+1 services');
+    expect(text).not.toContain('a A (core)');
+  });
+});
+
 describe('runImpact', () => {
   const files = {
     'services/web.yaml': 'id: web\nname: Web\nkind: web\nowner: front\ndependsOn:\n  - target: orders\n',

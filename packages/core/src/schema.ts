@@ -79,6 +79,13 @@ export const ConfigSchema = z.object({
       internalDomains: z.array(z.string()).default([]),
     })
     .default({}),
+  /** How `svclens sync` delivers what it finds in a repository. */
+  sync: z
+    .object({
+      /** `comment` writes nothing and prints a report, `pr` pushes a branch to open a pull request, `push` commits straight to the catalog branch. */
+      mode: z.enum(['comment', 'pr', 'push']).default('comment'),
+    })
+    .default({}),
   /** `false` turns off "propose change" links even when the git remote is on GitHub. */
   edit: z.union([z.literal(false), EditTargetSchema]).optional(),
 });
@@ -89,4 +96,5 @@ export type Evidence = z.infer<typeof EvidenceSchema>;
 export type Dependency = z.infer<typeof DependencySchema>;
 export type Service = z.infer<typeof ServiceSchema>;
 export type Config = z.infer<typeof ConfigSchema>;
+export type SyncMode = Config['sync']['mode'];
 export type EditTarget = z.infer<typeof EditTargetSchema>;

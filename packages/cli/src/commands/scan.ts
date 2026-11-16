@@ -37,6 +37,8 @@ export interface ScanOptions {
   json?: string;
   /** List every analyzed file in the report. */
   verbose?: boolean;
+  /** Credential-free `host/owner/name` recorded as `repo` of new services found in local (non-git-source) directories. */
+  repo?: string;
 }
 
 /** One declaration per environment is common (Debug, Release, Production), so allow a few more than one. */
@@ -126,7 +128,7 @@ export async function runScan(dir: string, opts: ScanOptions): Promise<number> {
   const scans = (
     await Promise.all(
       repos.map(async (repoDir) => {
-        const repo = sources.repoOf.get(repoDir);
+        const repo = sources.repoOf.get(repoDir) ?? (repos.length === 1 ? opts.repo : undefined);
         return (await scanProjects(repoDir)).map(({ dir, sub, scan }) => {
           if (repo) scan.hints.repo ??= repo;
           return { repoDir: dir, sub, scan };

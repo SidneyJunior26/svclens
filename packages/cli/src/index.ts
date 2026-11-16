@@ -8,3 +8,4 @@ export { createServeApp } from './serve/app.js';
 export { runExport, type ExportOptions } from './commands/export.js';
 export { runDiff, type DiffOptions } from './commands/diff.js';
 export { runImpact, type ImpactOptions } from './commands/impact.js';
+export { runSync, SYNC_MODES, type SyncOptions } from './commands/sync.js';

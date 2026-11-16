@@ -4,7 +4,7 @@ import fg from 'fast-glob';
 import type { RepoFiles, Skipped } from './types.js';
 
 export const IGNORED_DIRS = ['node_modules', 'dist', 'build', 'bin', 'obj', '.git', 'vendor', 'coverage', '.next', 'out'];
-const LOCKFILES = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'packages.lock.json', 'composer.lock', 'Gemfile.lock'];
+export const LOCKFILES = ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'packages.lock.json', 'composer.lock', 'Gemfile.lock'];
 /** Only these .env variants are read; real .env files may hold secrets. */
 export const ALLOWED_ENV_FILES = ['.env.example', '.env.sample', '.env.template', '.env.development'];
 

@@ -40,7 +40,8 @@ export async function refExists(dir: string, ref: string): Promise<boolean> {
  */
 export async function extractAt(root: string, ref: string, relPath: string, dest: string): Promise<boolean> {
   try {
-    await git(root, ['cat-file', '-e', `${ref}:${relPath || '.'}`]);
+    // `ref:` (empty path) is the root tree; git does not accept `ref:.` for it.
+    await git(root, ['cat-file', '-e', `${ref}:${relPath}`]);
   } catch {
     return false;
   }
