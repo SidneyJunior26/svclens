@@ -75,14 +75,14 @@ async function commitIdentity(root: string): Promise<string[]> {
 }
 
 /** Pushes the current branch; if the remote moved meanwhile, rebases once and tries again. */
-async function pushWithRetry(root: string, args: string[]): Promise<void> {
+async function pushWithRetry(root: string, args: string[], identity: string[]): Promise<void> {
   try {
     await git(root, ['push', ...args]);
   } catch (err) {
     if (!(err instanceof GitError) || !/rejected|non-fast-forward|fetch first/i.test(err.message)) throw err;
     const branch = await git(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
     try {
-      await git(root, ['pull', '--rebase', '--quiet', 'origin', branch]);
+      await git(root, [...identity, 'pull', '--rebase', '--quiet', 'origin', branch]);
     } catch (rebaseErr) {
       await git(root, ['rebase', '--abort']).catch(() => undefined);
       throw rebaseErr;
@@ -198,15 +198,16 @@ async function deliver(root: string, work: string, source: string, changed: stri
       await cp(path.join(work, rel), path.join(root, rel));
     }
     await git(root, ['add', '--', ...changed]);
-    await git(root, [...(await commitIdentity(root)), 'commit', '--quiet', '-m', message, '--', ...changed]);
+    const identity = await commitIdentity(root);
+    await git(root, [...identity, 'commit', '--quiet', '-m', message, '--', ...changed]);
     console.error(`committed ${changed.length} file${changed.length === 1 ? '' : 's'} on ${mode === 'pr' ? branch : base}`);
     if (opts.push === false) return 0;
     if (mode === 'pr') {
       // Branches under svclens/ belong to this tool, so a newer sync may replace an older one that is still open.
-      await pushWithRetry(root, ['--quiet', ...(branch.startsWith(BOT_PREFIX) ? ['--force'] : []), '--set-upstream', 'origin', branch]);
+      await pushWithRetry(root, ['--quiet', ...(branch.startsWith(BOT_PREFIX) ? ['--force'] : []), '--set-upstream', 'origin', branch], identity);
       console.error(`pushed branch ${branch}; open a pull request from it into ${base}`);
     } else {
-      await pushWithRetry(root, ['--quiet', 'origin', 'HEAD']);
+      await pushWithRetry(root, ['--quiet', 'origin', 'HEAD'], identity);
       console.error(`pushed to ${base}`);
     }
     return 0;

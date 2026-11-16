@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promi
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runSync } from '../src/index.js';
 
 const FIXTURE = fileURLToPath(new URL('../../scanners/test/fixtures/repos/orders-api', import.meta.url));
@@ -54,11 +54,20 @@ async function source(origin?: string) {
 let out: string[];
 let err: string[];
 beforeEach(() => {
+  // CI runners have no git identity; the tool must work without one.
+  vi.stubEnv('GIT_CONFIG_GLOBAL', os.devNull);
+  vi.stubEnv('GIT_CONFIG_SYSTEM', os.devNull);
+  // Without this git guesses an identity from the user and host name, which a bare CI runner cannot do.
+  vi.stubEnv('GIT_CONFIG_COUNT', '1');
+  vi.stubEnv('GIT_CONFIG_KEY_0', 'user.useConfigOnly');
+  vi.stubEnv('GIT_CONFIG_VALUE_0', 'true');
   out = [];
   err = [];
   vi.spyOn(console, 'log').mockImplementation((...a) => void out.push(a.join(' ')));
   vi.spyOn(console, 'error').mockImplementation((...a) => void err.push(a.join(' ')));
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe('runSync comment mode', () => {
   it('reports what would change and writes nothing', async () => {
