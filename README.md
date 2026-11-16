@@ -530,15 +530,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-Para atualizar o catálogo no merge, o fluxo muda só no modo e no token, que precisa de permissão de escrita no repositório do catálogo:
+Para atualizar o catálogo depois do merge, o fluxo muda no gatilho, no modo e no token, que precisa de permissão de escrita no repositório do catálogo. Com o modo `pr`, cada merge que muda o mapa abre (ou atualiza) um pull request no catálogo, e alguém do time aprova as inclusões, exclusões e alterações antes de elas entrarem no grafo:
 
 ```yaml
+# .github/workflows/mapa-merge.yml, no repositório de código
+name: Mapa de APIs (merge)
 on:
   push:
     branches: [main]
 jobs:
   mapa:
     runs-on: ubuntu-latest
+    env:
+      BRANCH: svclens/sync-${{ github.event.repository.name }}
+      GH_TOKEN: ${{ secrets.MAPA_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -549,14 +554,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # modo push: o commit vai direto para a branch do catálogo
-      - run: npx svclens sync mapa/catalogo --source . --mode push
-      # modo pr: troque a linha acima por estas duas
-      # - run: npx svclens sync mapa/catalogo --source . --mode pr --out ../relatorio.md
-      # - run: cd mapa && gh pr create --head "svclens/sync-$(basename "$GITHUB_REPOSITORY")" --title "Atualiza o mapa" --body-file ../relatorio.md || true
+      - run: npx svclens sync mapa/catalogo --source . --mode pr --branch "$BRANCH" --out relatorio.md
+      # abre o pull request só quando o sync enviou a branch; se ele já existe, o push acima o atualizou
+      - run: |
+          if git -C mapa ls-remote --exit-code --heads origin "$BRANCH" > /dev/null; then
+            cd mapa && gh pr create --head "$BRANCH" --title "Atualiza o mapa a partir de ${{ github.event.repository.name }}" --body-file ../relatorio.md || true
+          fi
 ```
 
-No modo `pr`, a branch `svclens/...` pertence ao svclens: se um merge novo chegar com o pull request anterior ainda aberto, a branch é substituída e o pull request se atualiza. Por isso o `|| true` no `gh pr create`, que reclama de pull request já existente. No modo `push`, se o catálogo andou entre o clone e o push, o svclens refaz o rebase uma vez e tenta de novo. Com `--no-push`, ele só faz o commit.
+Para o mapa se atualizar sozinho, sem revisão, troque `--mode pr --branch "$BRANCH" --out relatorio.md` por `--mode push` e remova o passo do `gh pr create`.
+
+No modo `pr`, a branch `svclens/...` pertence ao svclens: se um merge novo chegar com o pull request anterior ainda aberto, a branch é substituída e o pull request se atualiza. Por isso o `|| true` no `gh pr create`, que reclama de pull request já existente. Para que ninguém pule a revisão, proteja a branch principal do catálogo exigindo aprovação em pull request. No modo `push`, se o catálogo andou entre o clone e o push, o svclens refaz o rebase uma vez e tenta de novo. Com `--no-push`, ele só faz o commit.
 
 Nada disso depende do GitHub: `svclens sync` só precisa de git e de um diretório com o catálogo, então os mesmos comandos servem no GitLab CI, no Azure DevOps ou no Jenkins. O que muda é como o pipeline clona o catálogo e abre o pull request. O token com escrita no catálogo só deve existir em pipelines de merge, e nunca em pull requests vindos de forks. O modo `comment` não precisa dele.
 
